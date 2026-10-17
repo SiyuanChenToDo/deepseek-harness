@@ -1,0 +1,27 @@
+name: Verify DSH issue 9677 persisted PTC IDs
+
+on:
+  push:
+    branches:
+      - verification/dsh-9677-real-ci
+
+permissions:
+  contents: read
+
+jobs:
+  focused-ptc-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack pnpm --version
+      - name: Install workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Run PTC source and persisted ID unit tests
+        run: corepack pnpm exec vitest run packages/core/tools/tests/ptc-subcall-ids.spec.ts packages/core/tools/tests/ptc.spec.ts packages/core/tools/tests/ptc-calls.spec.ts --config vitest.config.ts
