@@ -1,27 +1,22 @@
 /**
- * Recover the highest previously persisted sub-dispatch ordinal for a provider
- * call ID. The run_code ordinal alone restarts at 1 on retries and can make
- * Session v4 reject the repeated subCallId during reconstruction.
+ * Allocate PTC child-call ordinals without reading historical Session events.
  *
- * Both the start and settle event refer to one dispatch, so take the maximum
- * (not a count). Ignore unrelated, malformed, and non-safe-integer IDs.
+ * Session.seq is the durable event-log watermark. Every dispatched child
+ * records a start event, so a restored session's seq exceeds the ordinals
+ * previously allocated and logged by that session. A per-live-Session counter
+ * also reserves ordinals across overlapping run_code executions.
+ *
+ * This prevents collisions within one Session. It does not repair already
+ * corrupted logs or coordinate distinct live Session objects writing the
+ * same underlying log concurrently.
  */
-export function previousPtcDispatchOrdinal(
-  callId: string,
-  events: Iterable<{ type: string; data?: unknown }>,
-): number {
-  const prefix = `${callId}:ptc:`
-  let maximum = 0
-  for (const event of events) {
-    if (event.type !== 'tool/ptc-dispatch-start' && event.type !== 'tool/ptc-dispatch') continue
-    const data = event.data
-    if (data === null || typeof data !== 'object') continue
-    const id = (data as { subCallId?: unknown }).subCallId
-    if (typeof id !== 'string' || !id.startsWith(prefix)) continue
-    const suffix = id.slice(prefix.length)
-    if (!/^[1-9]\d*$/.test(suffix)) continue
-    const ordinal = Number(suffix)
-    if (Number.isSafeInteger(ordinal)) maximum = Math.max(maximum, ordinal)
-  }
-  return maximum
+const nextOrdinals = new WeakMap<object, number>()
+
+export function nextPtcDispatchOrdinal(session: object, persistedSeq: number): number {
+  const durable = Number.isSafeInteger(persistedSeq) && persistedSeq >= 0 ? persistedSeq : 0
+  const floor = Math.max(durable, nextOrdinals.get(session) ?? 0)
+  if (floor >= Number.MAX_SAFE_INTEGER) throw new RangeError('PTC sub-call ordinal exhausted')
+  const next = floor + 1
+  nextOrdinals.set(session, next)
+  return next
 }
