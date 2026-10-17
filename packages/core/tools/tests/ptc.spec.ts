@@ -136,6 +136,47 @@ async function runCode(
   })
 }
 
+describe('PTC subCallId uniqueness across re-issued and resumed calls (#9677)', () => {
+  it('keeps the first call IDs stable while namespacing a repeated provider call ID', async () => {
+    const { ctx, runtime } = await setup({ mode: 'ptc' })
+    registerEcho(ctx)
+    const { agent, events } = fakeAgent()
+    runtime.behavior = async (request) => {
+      await request.bindings[0]!.functions.echo!({ value: 'test' })
+      return { logs: [], value: 'ok' }
+    }
+    expect((await runCode(ctx, 'program', { agent })).isError).toBe(false)
+    expect((await runCode(ctx, 'program', { agent })).isError).toBe(false)
+    const starts = events.filter(event => event.type === 'tool/ptc-dispatch-start')
+      .map(event => (event.data as { subCallId: string }).subCallId)
+    const settles = events.filter(event => event.type === 'tool/ptc-dispatch')
+      .map(event => (event.data as { subCallId: string }).subCallId)
+    expect(starts).toHaveLength(2)
+    expect(starts[0]).toBe('call-1:ptc:1')
+    expect(starts[1]).toMatch(/^call-1:ptc:1:run:[0-9a-f-]{36}$/)
+    expect(new Set(starts).size).toBe(2)
+    expect(settles).toEqual(starts)
+  })
+
+  it('namespaces the first execution of a restored session', async () => {
+    const { ctx, runtime } = await setup({ mode: 'ptc' })
+    registerEcho(ctx)
+    const { agent, events } = fakeAgent()
+    // Model the public Session.firstLiveSeq marker set from persisted replay.
+    Object.assign(agent.session, { firstLiveSeq: 8 })
+    runtime.behavior = async (request) => {
+      await request.bindings[0]!.functions.echo!({ value: 'after-restart' })
+      return { logs: [] }
+    }
+    expect((await runCode(ctx, 'program', { agent })).isError).toBe(false)
+    const starts = events.filter(event => event.type === 'tool/ptc-dispatch-start')
+      .map(event => (event.data as { subCallId: string }).subCallId)
+    expect(starts).toHaveLength(1)
+    expect(starts[0]).toMatch(/^call-1:ptc:1:run:[0-9a-f-]{36}$/)
+    expect(starts[0]).not.toBe('call-1:ptc:1')
+  })
+})
+
 it('logs detached frozen nested metadata without changing the binding value or log-content policy', async () => {
   const { ctx, runtime } = await setup({ mode: 'ptc' })
   try {
