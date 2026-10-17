@@ -1,0 +1,38 @@
+name: Red baseline for DSH #9677
+
+on:
+  push:
+    branches:
+      - verification/9677-red-unpatched
+
+permissions:
+  contents: read
+
+jobs:
+  expect-regression-to-fail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm install -g pnpm@11.28.5
+      - run: pnpm install --frozen-lockfile
+      - name: Verify #9677 tests fail against original producer
+        shell: bash
+        run: |
+          set +e
+          pnpm exec vitest run packages/core/tools/tests/ptc.spec.ts -t 'PTC subCallId uniqueness across re-issued and resumed calls' > /tmp/issue-9677-red.txt 2>&1
+          status=$?
+          set -e
+          cat /tmp/issue-9677-red.txt
+          if [ "$status" -eq 0 ]; then
+            echo "Unexpected green: tests did not reproduce the original bug."
+            exit 1
+          fi
+          if ! grep -Eq '[1-9]+ failed' /tmp/issue-9677-red.txt; then
+            echo "Tests failed unexpectedly without recognized Vitest failures."
+            exit 1
+          fi
+          echo "Expected red baseline reproduced; unpatched PTC producer violates new regression."
