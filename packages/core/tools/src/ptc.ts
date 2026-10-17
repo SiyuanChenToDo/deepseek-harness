@@ -24,6 +24,7 @@ import type { ApprovalService } from '@deepseek-ai/dsh-user-approval'
 import { deepFreeze, snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
 import { defineTool, parameterSchemaSpecToJsonSchema } from './schema.ts'
 import { PtcCalls } from './ptc-calls.ts'
+import { previousPtcDispatchOrdinal } from './ptc-subcall-ids.ts'
 import { TOOL_RUNTIME_SCHEDULER } from './index.ts'
 import type { PtcDispatchLog, ToolDefinition, ToolExecutionResult, ToolRuntime, ToolRunContext } from './index.ts'
 import type {} from './types.ts'
@@ -414,7 +415,12 @@ export function createRunCodeTool(registry: ToolRuntime, options: RunCodeBridgeO
         const onOuterAbort = (): void => { runController.abort(callSignal.reason) }
         callSignal.addEventListener('abort', onOuterAbort, { once: true })
 
-        let dispatches = 0
+        // Resume numbering from persisted events: provider retries can reuse
+        // the same outer call ID, but session v4 requires unique subCallIds.
+        let dispatches = previousPtcDispatchOrdinal(
+          String(exec.callId),
+          exec.agent?.session.snapshotEvents?.() ?? [],
+        )
         // The per-run scheduler uses the registry's staged interface and follows
         // the same concurrency rules as the native loop. It also follows the
         // native loop's SEQUENCING: every ordered stage (the dispatch-start
