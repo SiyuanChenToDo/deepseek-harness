@@ -6,6 +6,7 @@
  * @module @deepseek-ai/dsh-tools/src/ptc
  */
 
+import { randomUUID } from 'node:crypto'
 import { symbols, type Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { createUserMessage, HarnessError } from '@deepseek-ai/dsh-llm'
@@ -30,6 +31,9 @@ import type {} from './types.ts'
 
 /** The model-facing name of the PTC mode tool. */
 export const RUN_CODE_NAME = 'run_code'
+
+/** Parent tool-call IDs may be re-issued by a provider within one Session. */
+const ptcParentCalls = new WeakMap<object, Set<string>>()
 
 /**
  * The language-specific `run_code` schema text: the tool `description` and its
@@ -414,6 +418,21 @@ export function createRunCodeTool(registry: ToolRuntime, options: RunCodeBridgeO
         const onOuterAbort = (): void => { runController.abort(callSignal.reason) }
         callSignal.addEventListener('abort', onOuterAbort, { once: true })
 
+        // Preserve legacy numbering on the first execution of a fresh Session.
+        // A resumed Session can already contain the same provider callId, and a
+        // provider may re-issue that ID later in the same live Session. Namespace
+        // those executions so a repeated PTC subCallId cannot corrupt the log.
+        const session = exec.agent?.session
+        const parentId = String(exec.callId)
+        let seenParent = false
+        if (session !== undefined) {
+          let seen = ptcParentCalls.get(session)
+          if (seen === undefined) ptcParentCalls.set(session, seen = new Set())
+          seenParent = seen.has(parentId)
+          seen.add(parentId)
+        }
+        const namespace = seenParent || (session !== undefined && session.firstLiveSeq > 0)
+          ? `:run:${randomUUID()}` : ''
         let dispatches = 0
         // The per-run scheduler uses the registry's staged interface and follows
         // the same concurrency rules as the native loop. It also follows the
@@ -543,7 +562,7 @@ export function createRunCodeTool(registry: ToolRuntime, options: RunCodeBridgeO
           }
           const normalized = jsonNormalizeArgs(rawArgs)
           const n = ++dispatches
-          const subCallId = brandString<ToolCallId>(`${String(exec.callId)}:ptc:${n}`)
+          const subCallId = brandString<ToolCallId>(`${parentId}:ptc:${n}${namespace}`)
           const input = {
             callId: subCallId,
             rootCallId: exec.rootCallId,
