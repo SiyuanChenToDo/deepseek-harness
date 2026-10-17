@@ -2526,3 +2526,32 @@ describe('PTC state ownership', () => {
     } finally { format.mockRestore(); instructions.mockRestore(); await ctx.fiber.dispose() }
   })
 })
+
+it('keeps PTC subCallIds unique across repeated outer call IDs and restored sessions', async () => {
+  const { ctx, runtime } = await setup({ mode: 'ptc' })
+  try {
+    registerEcho(ctx)
+    const session = Session.create(SessionId('ptc-reused-provider-id'))
+    runtime.behavior = async (request) => {
+      const value = await request.bindings[0]!.functions.echo!({ value: 'again' })
+      return { logs: [], value }
+    }
+    const first = await runCode(ctx, 'return await tools.echo({value:"again"})', { agent: { ctx, session } as Agent })
+    const second = await runCode(ctx, 'return await tools.echo({value:"again"})', { agent: { ctx, session } as Agent })
+    expect(first.isError).toBe(false)
+    expect(second.isError).toBe(false)
+    const starts = session.snapshotEvents()
+      .filter(event => event.type === 'tool/ptc-dispatch-start')
+      .map(event => String(event.data.subCallId))
+    expect(starts).toEqual(['call-1:ptc:1', 'call-1:ptc:2'])
+    const restored = Session.create(session.id, session.snapshotEvents(), session.header)
+    const third = await runCode(ctx, 'return await tools.echo({value:"again"})', { agent: { ctx, session: restored } as Agent })
+    expect(third.isError).toBe(false)
+    const restarted = restored.snapshotEvents()
+      .filter(event => event.type === 'tool/ptc-dispatch-start')
+      .map(event => String(event.data.subCallId))
+    expect(restarted).toEqual(['call-1:ptc:1', 'call-1:ptc:2', 'call-1:ptc:3'])
+  } finally {
+    await ctx.fiber.dispose()
+  }
+})
