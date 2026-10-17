@@ -158,6 +158,39 @@ describe('PTC subCallId uniqueness across re-issued and resumed calls (#9677)', 
     expect(settles).toEqual(starts)
   })
 
+  it('keeps PTC IDs unique after restoring a real Session containing a prior dispatch', async () => {
+    const { ctx, runtime } = await setup({ mode: 'ptc' })
+    registerEcho(ctx)
+    const initial = Session.create(SessionId('ptc-resumed-collision'))
+    initial.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'reproduce a repeated provider call' }], source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    const oldId = ToolCallId('call-1:ptc:1')
+    initial.append('tool/ptc-dispatch-start', {
+      rootCallId: ToolCallId('call-1'), parentCallId: ToolCallId('call-1'),
+      subCallId: oldId, name: 'echo', arguments: { value: 'before-restart' },
+    })
+    initial.append('tool/ptc-dispatch', {
+      rootCallId: ToolCallId('call-1'), parentCallId: ToolCallId('call-1'),
+      subCallId: oldId, name: 'echo', arguments: { value: 'before-restart' },
+      isError: false, content: [{ type: 'text', text: 'echo:before-restart' }],
+    })
+    const restored = Session.create(initial.id, initial.snapshotEvents(), initial.header)
+    expect(restored.firstLiveSeq).toBeGreaterThan(0)
+    const agent = { ctx, session: restored } as Agent
+    runtime.behavior = async (request) => {
+      await request.bindings[0]!.functions.echo!({ value: 'after-restart' })
+      return { logs: [] }
+    }
+    expect((await runCode(ctx, 'program', { agent })).isError).toBe(false)
+    const starts = restored.snapshotEvents().filter(event => event.type === 'tool/ptc-dispatch-start')
+      .map(event => event.data.subCallId)
+    expect(starts).toHaveLength(2)
+    expect(starts[0]).toBe(oldId)
+    expect(starts[1]).toMatch(/^call-1:ptc:1:run:[0-9a-f-]{36}$/)
+    expect(new Set(starts).size).toBe(2)
+  })
+
   it('namespaces the first execution of a restored session', async () => {
     const { ctx, runtime } = await setup({ mode: 'ptc' })
     registerEcho(ctx)
