@@ -1,0 +1,23 @@
+name: Verify PTC ID collision contract
+
+on:
+  push:
+    branches:
+      - research/9677-ptc-id-collision
+
+permissions:
+  contents: read
+
+jobs:
+  ptc-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test research_repros/ptc_id_collision.test.mjs
+      - name: Ensure unpatched source still matches reproduced ID formula
+        run: |
+          grep -F 'let dispatches = 0' packages/core/tools/src/ptc.ts
+          grep -F 'const subCallId = brandString<ToolCallId>' packages/core/tools/src/ptc.ts
