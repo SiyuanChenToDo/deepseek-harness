@@ -22,4 +22,4 @@ jobs:
       - name: Run real production PTC Vitest suite
         run: pnpm exec vitest run packages/core/tools/tests/ptc.spec.ts
       - name: Run source type checks
-        run: pnpm exec tsc -p packages/core/tools/tsconfig.json --noEmit
+        run: pnpm exec tsc -b packages/core/tools/tsconfig.json
